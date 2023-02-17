@@ -47,7 +47,7 @@ builder.Services.AddAuthentication(options => {
     jwt.TokenValidationParameters = TokenValidationParameters;
 });
 
-builder.Services.AddIdentity<employer3, IdentityRole>(option => option.SignIn.RequireConfirmedEmail = false
+builder.Services.AddIdentity<employer3, IdentityRole>(option => option.SignIn.RequireConfirmedEmail = true
 
 ).AddEntityFrameworkStores<postgres>();
 

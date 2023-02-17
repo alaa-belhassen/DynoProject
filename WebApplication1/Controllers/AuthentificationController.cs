@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net.WebSockets;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.Tasks;
 using login.data.PostgresConn;
 using login.models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -103,75 +104,71 @@ namespace login.controller
                 return BadRequest("Role does not Exist");
                 }
 
-                if (is_created.Succeeded == true)
-                {
-                    try
-                    {
-                        var emailBody = "Please confirm your email address <a href=\"#URL#\">Click here</a>";
-                        var confirmationUrl = Url.Action("ConfirmEmail", "Authentification", new { email = new_user.Email , code = is_created }, Request.Scheme);
-                        var email = emailBody.Replace("#URL#", confirmationUrl);
-                        EmailHelperSMTP emailHelper = new EmailHelperSMTP();
-
-                        bool emailResponse = emailHelper.SendEmail(new_user.Email, email, _configuration);
-                        if (emailResponse)
-                        {
-                            return Ok();
-                        }
-                        return BadRequest(new
-                        {
-                            Error = "Log email failed"
-                        });
-                    }
-                    catch(Exception ex)
-                    {
-                        Console.WriteLine(ex);
-                    }
-                    
-                    
-
-                }
-
-
-                if (is_created.Succeeded == true)
+                if (is_created.Succeeded )
                 {
                     // add Employer information to database 
                     await RegisterEmployer(user);
                     // Find user by Email
                     var createdUser = await _usermanager.FindByEmailAsync(new_user.Email);
+
                     // add User Role
                     await _usermanager.AddToRoleAsync(createdUser, user.Role);
 
-          
 
-                    //Add Token
-                    var token =await GenerateJwtToken(new_user);
-                return Ok(new authResult(){
-                    Result = true,
-                    Token = token,
-                    //RefreshToken = token.RefreshToken
+                    //send mail to user
 
-
-                });
-
-
-            } else {
-                List<string> errors = new List<string>();
-                 foreach (var error in is_created.Errors)
+                    try
                     {
-                       errors.Add(error.Code + error.Description) ;
+                        //custom code de confirmation   
+                        string code = "grdFyASkaXns3wg3XOtvr"+createdUser.Id;
+                        // email link to
+                        var confirmationUrl = Request.Scheme + "://" + Request.Host + @Url.Action("ConfirmEmail", "Authentification", new { email = new_user.Email, code = code });
+                        //setting the email message
+                        var emailBody = "<h1 style='color:#4CAF50'>Dear User</h1>" +
+                            "<p>Thank you for signing up for our service. To complete the registration process, we need to verify your account.</p>" +
+                            "<p> Please click on the link below to verify your email address and activate your account:</p>" +
+                            "<a style='background:#4CAF50;padding: 15px 32px; text-align: center; text-decoration: none;display: inline-block;font-size: 16px;margin: 4px 2px; cursor: pointer;color:white; 'href=" + System.Text.Encodings.Web.HtmlEncoder.Default.Encode(confirmationUrl) + ">Verification Link</a>" +
+                            "<p>Once you've verified your account, you'll be able to start using our service right away. If you have any questions or concerns, please don't hesitate to contact our customer support team.</p>" +
+                            "<p>Thank you for choosing our service!<p>";
+                       
+                       EmailHelperSMTP emailHelper = new EmailHelperSMTP();
+
+                        bool emailResponse = emailHelper.SendEmail(new_user.Email, emailBody);
+                        if (emailResponse)
+                        {
+                            return Ok("Email need confirmation");
+                        }
+                        return BadRequest(
+                           "Log email failed"
+                        );
                     }
-                
-                  return BadRequest(new authResult(){
-                    Result = false,
-                    Errors = errors
-                });
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex);
+                    }
+               
+
+                }
+                else
+                {
+                    List<string> errors = new List<string>();
+                    foreach (var error in is_created.Errors)
+                    {
+                        errors.Add(error.Code + error.Description);
+                    }
+
+                    return BadRequest(new authResult()
+                    {
+                        Result = false,
+                        Errors = errors
+                    });
 
                 }
         
 
             }
        
-            return BadRequest();
+            return BadRequest("bad");
 
         }
 
@@ -202,10 +199,8 @@ namespace login.controller
 
         /// ----------------confirm email
 
-
-
-        [Route("ConfirmEmail")]
         [HttpGet]
+        [Route("ConfirmEmail")]
         public async Task<IActionResult> ConfirmEmail(string email, string code)
         {
             if (email == null || code == null)
@@ -218,7 +213,7 @@ namespace login.controller
               }
                 });
             }
-            var user = await _usermanager.FindByIdAsync(email);
+            var user = await _usermanager.FindByEmailAsync(email);
             if (user == null)
             {
                 return BadRequest(new authResult()
@@ -229,12 +224,21 @@ namespace login.controller
               }
                 });
             }
-
-            code = Encoding.UTF8.GetString(Convert.FromBase64String(code));
-            var result = await _usermanager.ConfirmEmailAsync(user, code);
-            var status = result.Succeeded ? "Thank you for confirming your mail" : "your mail conf";
-
-            return Ok(status);
+            string verifcode = "grdFyASkaXns3wg3XOtvr"+user.Id;
+            if (code != verifcode)
+            {
+                BadRequest(new authResult()
+                {
+                    Result = false,
+                    Errors = new List<string>()
+                    {
+                        "code incorrect"
+                    }
+                });
+            } 
+            user.EmailConfirmed = true;
+            await _usermanager.UpdateAsync(user);
+            return Ok("Thank you for confirming your mail") ;
         }
         // [HttpGet]
         // [Route("ConfirmEmail")]
@@ -274,7 +278,7 @@ namespace login.controller
                     return BadRequest(new authResult()
                     {
                         Errors = new List<string>(){
-                        "email need confirmed "
+                        "email need confirmation "
                     },
                         Result = false
                     });
@@ -331,23 +335,7 @@ namespace login.controller
             return claims;
         }
 
-        //private bool sendEMail(String body,string email)
-        //{
-        //    var client = new RestClient("https://api.mailgun.net/v3");
-        //    var request = new RestRequest("",Method.Post);
-        //    client.Authenticator = new HttpBasicAuthenticator("api", _configuration.GetSection("EmailConfig").Value);
-        //    request.AddParameter("domain", value: "sandbox4a9a13439d364e398d5e86b0361bf784.mailgun.org");
-        //    request.Resource = "{domain}/messages";
-        //    request.AddParameter("from", "Sandbox Mailgun<postmaster@sandbox4a9a13439d364e398d5e86b0361bf784.mailgun.org>");
-        //    request.AddParameter("to", "nidhalhaboubi520@gmail.com");
-        //    request.AddParameter("subject", "Email Verification");
-        //    request.AddParameter("text", body);
-        //    request.Method = Method.Post;
-        //    var response = client.Execute(request);
-        //    return response.IsSuccessful;
-             
 
-        //}
 ///------------ get users Roles
         [HttpGet]
         [Route("GetUsersRoutes")]
